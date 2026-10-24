@@ -69,11 +69,11 @@ function App() {
     : route === 'settings' ? <Settings d={data} />
     : route === 'settle' ? <SettlementScreen d={data} />
     : <Home d={data} />;
-  const nav = (r: string, label: string, cls = '') => <a href={'#/' + r} class={`${cls} ${route === r || (r === 'home' && !route) || (r === 'add' && route === 'charge') || (r === 'car' && route === 'settings') ? 'on' : ''}`}>{cls ? <span>{label}</span> : label}</a>;
+  const nav = (r: string, label: string, cls = '') => <a href={'#/' + r} class={`${cls} ${route === r || (r === 'home' && !route) || (r === 'add' && route === 'charge') || (r === 'car' && route === 'settings') ? 'on' : ''}`}>{cls ? <span aria-label="Add expense">{label}</span> : label}</a>;
   return <div class="shell">
     <nav class="nav">
       <div class="wm"><div class="wordmark">Tesla Expense<b>.</b></div>{pending > 0 && <div class="sync" style="margin-top:8px">{pending} waiting to sync</div>}</div>
-      {nav('home', 'Home')}{nav('activity', 'Activity')}{nav('add', 'Add', 'add')}{nav('charging', 'Charging')}{nav('car', 'Car')}
+      {nav('home', 'Home')}{nav('activity', 'Activity')}{nav('add', '+', 'add')}{nav('charging', 'Charging')}{nav('car', 'Car')}
     </nav>
     <main>{pending > 0 && <div class="sync mobile-sync" style="margin-bottom:12px">{pending} waiting to sync</div>}{page}</main>
   </div>;
