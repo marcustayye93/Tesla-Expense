@@ -223,3 +223,23 @@ export function monthlyTable(xs: Expense[]): MonthRow[] {
   }
   return [...m.values()].sort((a, b) => b.ym.localeCompare(a.ym));
 }
+
+// ---------- Display helpers ----------
+/** Display-only short label: drops order numbers, brackets and trailing remarks. The full text stays in the record and its detail view. */
+export const shortLabel = (t: string) => t.replace(/\s*\([^)]*\)/g, '').replace(/\s*\bRN\d{6,}\b/g, '').split(',')[0].trim() || t;
+
+/** Stored value (integer cents, basis points) to what the person types (dollars, percent), and back. */
+export function toInput(v: unknown, ty: string): string {
+  if (v == null || v === '') return '';
+  if (ty === 'money') return (Number(v) / 100).toFixed(2);
+  if (ty === 'pct') return String(Number(v) / 100);
+  return String(v);
+}
+export function fromInput(v: string, ty: string): string | number | null {
+  const t = String(v ?? '').trim(); if (t === '') return null;
+  if (ty === 'money') { const neg = t.startsWith('-'); const c = parseCents(t.replace(/^-/, '').replace(/,/g, '')); return c == null ? null : neg ? -c : c; }
+  if (ty === 'pct') return Math.round(Number(t) * 100);
+  if (ty === 'number') return Number(t);
+  return t;
+}
+

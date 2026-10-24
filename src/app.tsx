@@ -4,14 +4,22 @@ import type { Session } from '@supabase/supabase-js';
 import { sb, load, cached, enqueue, flush, queue, patchExpense, softDeleteByDraft, Data, Row } from './db';
 import {
   Expense, PaidBy, Person, Split, PURCHASE, live, signed, settlement, balanceSentence, loanSchedule, loanTerms,
-  purchasePosition, monthTotals, categoryTotals, monthlyTable, runningCosts, tco, parseCents, sgd, sgd0, todaySG, shiftDays, fmtDate, fmtMonth, daysBetween,
+  purchasePosition, shortLabel, toInput, fromInput, monthTotals, categoryTotals, monthlyTable, runningCosts, tco, parseCents, sgd, sgd0, todaySG, shiftDays, fmtDate, fmtMonth, daysBetween,
 } from './money';
 import './style.css';
 
 const CATS = ['Parking', 'ERP and Fines', 'Charging', 'Washing and Detailing', 'Accessories', 'Servicing and Tyres', 'Insurance',
   'Road Tax', 'PPF and Tint', 'Repairs', 'Subscriptions', 'Purchase and Loan', 'Other'];
+const CORE_CATS = ['Parking', 'ERP and Fines', 'Charging', 'Washing and Detailing', 'Servicing and Tyres', 'Other'];
 const LOCS: [string, string][] = [['DadSolar', "Dad's Solar"], ['Supercharger', 'Supercharger'], ['Home', 'Home'],
-  ['PublicAC', 'Public AC'], ['PublicDC', 'Public DC'], ['Destination', 'Destination']];
+  ['PublicAC', 'Mall / carpark'], ['PublicDC', 'Fast charger'], ['Destination', 'Hotel / other']];
+const title = (e: Expense) => (e.label ? shortLabel(e.label) : '') || e.vendor || e.note || e.category;
+const loanLabel = (p: Row) => p.loan_source || 'Dealer estimate, awaiting DBS letter';
+/** Date control in the app's date format; the native picker sits invisibly on top. */
+function DateBtn({ value, onPick }: { value: string; onPick: (v: string) => void }) {
+  return <label class="in datebtn"><span class="num">{fmtDate(value)}</span>
+    <input type="date" value={value} onInput={(e) => onPick(e.currentTarget.value || todaySG())} /></label>;
+}
 const uuid = () => crypto.randomUUID();
 const ls = { get: <T,>(k: string, d: T): T => { try { return JSON.parse(localStorage.getItem(k) ?? '') ?? d; } catch { return d; } },
   set: (k: string, v: unknown) => localStorage.setItem(k, JSON.stringify(v)), del: (k: string) => localStorage.removeItem(k) };
@@ -55,19 +63,19 @@ function App() {
   const params = new URLSearchParams(qs);
   const page = route === 'add' ? <QuickAdd d={data} params={params} />
     : route === 'charge' ? <ChargeForm d={data} params={params} />
-    : route === 'activity' ? <Activity d={data} />
+    : route === 'activity' ? <Activity d={data} params={params} />
     : route === 'charging' ? <Charging d={data} />
     : route === 'car' ? <Car d={data} />
+    : route === 'settings' ? <Settings d={data} />
     : route === 'settle' ? <SettlementScreen d={data} />
     : <Home d={data} />;
-  const nav = (r: string, label: string, cls = '') => <a href={'#/' + r} class={`${cls} ${route === r || (r === 'home' && !route) || (r === 'add' && route === 'charge') ? 'on' : ''}`}>{cls ? <span>{label}</span> : label}</a>;
+  const nav = (r: string, label: string, cls = '') => <a href={'#/' + r} class={`${cls} ${route === r || (r === 'home' && !route) || (r === 'add' && route === 'charge') || (r === 'car' && route === 'settings') ? 'on' : ''}`}>{cls ? <span>{label}</span> : label}</a>;
   return <div class="shell">
     <nav class="nav">
       <div class="wm"><div class="wordmark">Tesla Expense<b>.</b></div>{pending > 0 && <div class="sync" style="margin-top:8px">{pending} waiting to sync</div>}</div>
       {nav('home', 'Home')}{nav('activity', 'Activity')}{nav('add', 'Add', 'add')}{nav('charging', 'Charging')}{nav('car', 'Car')}
     </nav>
     <main>{pending > 0 && <div class="sync mobile-sync" style="margin-bottom:12px">{pending} waiting to sync</div>}{page}</main>
-    <div class="footer-safe">Parked? Log it now. Driving? Tell Grok, or log it when you stop.</div>
   </div>;
 }
 
@@ -106,52 +114,43 @@ function SignIn({ onIn }: { onIn: () => void }) {
 
 // ---------------- home ----------------
 function Home({ d }: { d: Data }) {
-  const [swap, setSwap] = useState(ls.get('yl-swap', false));
   const p = d.profile!;
-  const run = runningCosts(d.expenses), all = tco(d.expenses);
+  const all = tco(d.expenses);
   const ym = todaySG().slice(0, 7), lastYm = shiftDays(ym + '-01', -1).slice(0, 7);
   const mt = monthTotals(d.expenses, ym), lt = monthTotals(d.expenses, lastYm);
   const diff = mt.total - lt.total;
   const w = settlement(d.expenses, d.settlements);
   const pos = purchasePosition(p as any, d.expenses, new Set(d.paid.map((r) => r.seq)));
   const odo = latestOdo(d);
-  const big = swap ? ['Total cost of ownership', all] : ['Running costs to date', run];
-  const small = swap ? ['Running costs', run] : ['Total cost of ownership', all];
+  const recent = live(d.expenses).slice(0, 3);
   return <div>
-    <div class="lbl">{p.model_label}</div>
-    <div class="sub" style="margin-top:6px">{p.plate || 'Plate pending'} · {p.delivery_date ? `${daysBetween(p.delivery_date, todaySG())} days owned` : 'Delivery date to confirm'} · {odo ? `${odo.toLocaleString('en-SG')} km` : 'No odometer yet'}</div>
-    <QuickLog d={d} />
-    <div class="hero" onClick={() => { setSwap(!swap); ls.set('yl-swap', !swap); }}>
-      <div class="lbl">{big[0]}</div>
-      <div class="big num">{sgd(big[1] as number)}</div>
-      <div class="second num">{sgd(small[1] as number)} <span class="lbl" style="margin-left:8px">{small[0]}</span></div>
+    <div class="sub carline">{p.plate || 'Plate pending'} · {p.delivery_date ? `${daysBetween(p.delivery_date, todaySG())} days owned` : 'Delivery date to confirm'}{odo ? ` · ${odo.toLocaleString('en-SG')} km` : ''}</div>
+    <div class="hero" data-testid="hero">
+      <div class="lbl">This month · {fmtMonth(ym)}</div>
+      <div class="big num">{sgd(mt.total)}</div>
+      <div class="second num">{sgd(all)} <span class="lbl" style="margin-left:8px">Spent on the car so far</span></div>
     </div>
     <div class="cols">
-      <div>
-        <div class="card"><span class="lbl">This month · {fmtMonth(ym)}</span>
-          <div class="fig num">{sgd(mt.total)}</div>
-          {mt.byCat.slice(0, 3).map(([c, v]) => <div class="row"><span class="sub">{c}</span><span class="num">{sgd(v)}</span></div>)}
-          <p class="mute" style="margin-top:8px">{diff === 0 ? `Same as ${fmtMonth(lastYm).split(' ')[0]}` : `${sgd(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'} than ${fmtMonth(lastYm).split(' ')[0]}`}</p>
-        </div>
-        <div class="card"><span class="lbl">Settlement</span>
-          <div class="fig num" style="font-size:26px">{balanceSentence(w.balance)}</div>
-          <div style="margin-top:14px;display:flex;gap:8px"><a class="btn" href="#/settle">Settle Up</a></div>
-        </div>
+      <div class="card" data-testid="settle-card"><span class="lbl">Between you</span>
+        <div class="fig num" style="font-size:26px">{balanceSentence(w.balance)}</div>
+        {w.balance !== 0 && <a class="btn" href="#/settle" style="margin-top:14px">Settle up</a>}
       </div>
-      <div>
-        <div class="card"><span class="lbl">Loan · {p.lender}</span>
-          <div class="row"><span class="sub">Instalments paid</span><span class="num">{pos.paidCount} of {p.tenure_months}</span></div>
-          <div class="row"><span class="sub">Next instalment</span><span class="num">{pos.next ? (pos.next.due ? `${fmtDate(pos.next.due)} · ${sgd(pos.next.amount)}` : `Waiting for bank letter · ${sgd(pos.next.amount)}`) : 'None'}</span></div>
-          <div class="row"><span class="sub">Principal remaining</span><span class="num">{sgd(pos.principalRemaining)}</span></div>
-          <div class="row"><span class="sub">Downpayment still to pay</span><span class="num">{sgd(pos.remainingDownpayment)}</span></div>
-        </div>
-        <div class="card"><span class="lbl">Recent</span>
-          {live(d.expenses).slice(0, 5).map((e) => <div class="row"><span><span class="sub">{e.label || e.vendor || e.category}</span><br /><span class="mute" style="font-size:14px">{fmtDate(e.date)} · {e.category}</span></span><span class="num">{sgd(signed(e))}</span></div>)}
-          <a class="btn ghost sm" href="#/activity" style="margin-top:12px">All activity</a>
-        </div>
+      <div class="card" data-testid="next-card"><span class="lbl">Next due</span>
+        {pos.next ? <div class="row"><span><span class="sub">Loan instalment</span><br /><span class="mute" style="font-size:14px">{pos.next.due ? fmtDate(pos.next.due) : loanLabel(p)}</span></span><span class="num">{sgd(pos.next.amount)}</span></div>
+          : <p class="mute">Nothing due.</p>}
+        {pos.remainingDownpayment > 0 && <div class="row"><span class="sub">Still to pay before collection</span><span class="num">{sgd(pos.remainingDownpayment)}</span></div>}
       </div>
     </div>
-    <div class="cols charts"><Donut d={d} /><MonthTable d={d} /></div>
+    <QuickLog d={d} />
+    <div class="cols" style="margin-top:12px">
+      <div class="card"><span class="lbl">Recent</span>
+        {recent.length === 0 && <p class="mute">Nothing logged yet. Tap a Quick log button above.</p>}
+        {recent.map((e) => <div class="row"><span><span class="sub">{title(e)}</span><br /><span class="mute" style="font-size:14px">{fmtDate(e.date)} · {e.paid_by}</span></span><span class="num">{sgd(signed(e))}</span></div>)}
+        <a class="btn ghost sm" href="#/activity" style="margin-top:12px">All activity</a>
+        <p class="mute" style="margin-top:12px;font-size:14px">{diff === 0 ? `This month is the same as ${fmtMonth(lastYm).split(' ')[0]}.` : `This month is ${sgd(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'} than ${fmtMonth(lastYm).split(' ')[0]}.`}</p>
+      </div>
+      <div><Donut d={d} /><MonthTable d={d} /></div>
+    </div>
   </div>;
 }
 const QUICK: [string, string, string][] = [['solar', "Dad's Solar, free", ''], ['Supercharger', 'Supercharger', '#/charge?loc=Supercharger'],
@@ -179,13 +178,14 @@ function QuickLog({ d }: { d: Data }) {
 const GREYS = ['#FFFFFF', '#C9CBCF', '#9A9DA2', '#6E7176', '#4A4D52', '#33363B'];
 /** Hand-rolled SVG donut, greys by rank; anything past five slices is grouped. */
 function Donut({ d }: { d: Data }) {
-  const [all, setAll] = useState(false);
+  const [all, setAll] = useState(true);
+  if (categoryTotals(d.expenses, false).length < 2) return null; // a one-slice donut says nothing
   const raw = categoryTotals(d.expenses, !all);
   const items = raw.length > 6 ? [...raw.slice(0, 5), ['Everything else', raw.slice(5).reduce((a, [, v]) => a + v, 0)] as [string, number]] : raw;
   const total = items.reduce((a, [, v]) => a + v, 0);
   const R = 70, C = 2 * Math.PI * R; let at = 0;
   return <div class="card"><span class="lbl">Spending by category</span>
-    <div class="seg" style="margin:8px 0 16px"><button class={`chip ${!all ? 'on' : ''}`} onClick={() => setAll(false)}>Running costs</button><button class={`chip ${all ? 'on' : ''}`} onClick={() => setAll(true)}>Everything</button></div>
+    <div class="seg" style="margin:8px 0 16px"><button class={`chip ${all ? 'on' : ''}`} onClick={() => setAll(true)}>Everything</button><button class={`chip ${!all ? 'on' : ''}`} onClick={() => setAll(false)}>Day-to-day costs</button></div>
     {total === 0 ? <p class="mute">Nothing logged yet.</p> : <div class="donut">
       <svg viewBox="0 0 180 180" width="180" height="180" role="img" aria-label="Spending by category">
         <circle cx="90" cy="90" r={R} fill="none" stroke="#22262B" stroke-width="28" />
@@ -202,11 +202,13 @@ function Donut({ d }: { d: Data }) {
 }
 
 function MonthTable({ d }: { d: Data }) {
-  const rows = monthlyTable(d.expenses).slice(0, 12);
-  return <div class="card"><span class="lbl">Monthly spend and 50/50 shares</span>
-    {rows.length === 0 ? <p class="mute">Nothing logged yet.</p> : <table class="num" style="margin-top:4px"><thead><tr><th>Month</th><th class="r">Total</th><th class="r">Marcus</th><th class="r">Chesa</th></tr></thead>
+  const ym = todaySG().slice(0, 7);
+  const rows = monthlyTable(d.expenses).filter((r) => r.ym < ym).slice(0, 12);
+  if (rows.length === 0) return null;
+  return <div class="card"><span class="lbl">Past months, each person's share</span>
+    {<table class="num" style="margin-top:4px"><thead><tr><th>Month</th><th class="r">Total</th><th class="r">Marcus</th><th class="r">Chesa</th></tr></thead>
       <tbody>{rows.map((r) => { const [mo, y] = fmtMonth(r.ym).split(' '); return <tr><td>{mo.slice(0, 3)} {y}</td><td class="r">{sgd0(r.total)}</td><td class="r">{sgd0(r.marcus)}</td><td class="r">{sgd0(r.chesa)}</td></tr>; })}</tbody></table>}
-    <p class="mute" style="margin-top:10px;font-size:14px">Shares follow each record's split, 50/50 unless changed. Who still owes whom is on Settle Up.</p>
+    <p class="mute" style="margin-top:10px;font-size:14px">Shares are 50/50 unless a record says otherwise.</p>
   </div>;
 }
 
@@ -247,7 +249,10 @@ function QuickAdd({ d, params }: { d: Data; params: URLSearchParams }) {
   const undo = useUndo();
   const set = (p: Partial<Draft>) => { const n = { ...f, ...p }; setF(n); ls.set(KEY, n); };
   const recent = ls.get<string[]>('yl-recent-cats', []);
-  const cats = [...recent.filter((c) => CATS.includes(c)), ...CATS.filter((c) => !recent.includes(c))];
+  const [moreCats, setMoreCats] = useState(false);
+  const top = [...new Set([...recent.filter((c) => CATS.includes(c)), ...CORE_CATS])].slice(0, 6);
+  if (f.category && !top.includes(f.category)) top.push(f.category);
+  const cats = moreCats ? [...top, ...CATS.filter((c) => !top.includes(c))] : top;
   const cents = parseCents(f.amount);
   const fx = Number(f.fx);
   const sgdCents = cents == null ? null : f.currency === 'SGD' ? cents : fx > 0 ? Math.round(cents * fx) : null;
@@ -290,14 +295,17 @@ function QuickAdd({ d, params }: { d: Data; params: URLSearchParams }) {
       <div class="amount"><span>{f.currency === 'MYR' ? 'RM' : 'S$'}</span>
         <input data-testid="amount" inputMode="decimal" placeholder="0.00" value={f.amount} autofocus onInput={(e) => set({ amount: e.currentTarget.value })} class="num" /></div></div>
     <div><span class="lbl">Category</span><div class="chips" style="margin-top:8px">
-      {cats.map((c) => <button class={`chip ${f.category === c ? 'on' : ''}`} onClick={() => c === 'Charging' ? (location.hash = '#/charge') : set({ category: c })}>{c}</button>)}</div></div>
+      {cats.map((c) => <button class={`chip ${f.category === c ? 'on' : ''}`} onClick={() => c === 'Charging' ? (location.hash = '#/charge') : set({ category: c })}>{c}</button>)}
+      <button class="chip ghostchip" data-testid="more-cats" onClick={() => setMoreCats(!moreCats)}>{moreCats ? 'Fewer' : 'More…'}</button></div></div>
     <div><span class="lbl">Paid by</span><div class="seg" style="margin-top:8px">
       {(['Marcus', 'Chesa', 'Joint'] as PaidBy[]).map((p) => <button class={`chip ${f.paid_by === p ? 'on' : ''}`} onClick={() => set({ paid_by: p })}>{p}</button>)}</div></div>
     <div><span class="lbl">Date</span><div class="seg" style="margin-top:8px">
       <button class={`chip ${f.date === todaySG() ? 'on' : ''}`} onClick={() => set({ date: todaySG() })}>Today</button>
       <button class={`chip ${f.date === shiftDays(todaySG(), -1) ? 'on' : ''}`} onClick={() => set({ date: shiftDays(todaySG(), -1) })}>Yesterday</button>
-      <input class="in" type="date" value={f.date} onInput={(e) => set({ date: e.currentTarget.value || todaySG() })} style="min-height:64px" /></div></div>
-    <button class="btn ghost sm" onClick={() => set({ more: !f.more })}>{f.more ? 'Fewer details' : 'More details'}</button>
+      <DateBtn value={f.date} onPick={(v) => set({ date: v })} /></div></div>
+    {err && <p>{err}</p>}
+    <button data-testid="save" class="btn primary save" onClick={save} disabled={busy}>{editId ? 'Save changes' : 'Save Expense'}</button>
+    <button class="linkbtn" data-testid="more-details" onClick={() => set({ more: !f.more })}>{f.more ? 'Hide details' : 'Add note, vendor, split…'}</button>
     {f.more && <div class="grid2">
       <label class="field"><span class="lbl">Note</span><input class="in" value={f.note} onInput={(e) => set({ note: e.currentTarget.value })} /></label>
       <label class="field"><span class="lbl">Vendor</span><input class="in" value={f.vendor} onInput={(e) => set({ vendor: e.currentTarget.value })} /></label>
@@ -312,8 +320,6 @@ function QuickAdd({ d, params }: { d: Data; params: URLSearchParams }) {
         {sgdCents != null && <span class="sub num">= {sgd(sgdCents)}</span>}</label>}
       <label class="field"><span class="lbl">Type</span><select class="in" value={f.is_refund ? 'r' : 'c'} onChange={(e) => set({ is_refund: e.currentTarget.value === 'r' })}><option value="c">Cost</option><option value="r">Refund</option></select></label>
     </div>}
-    {err && <p>{err}</p>}
-    <button data-testid="save" class="btn primary save" onClick={save} disabled={busy}>{editId ? 'Save changes' : 'Save Expense'}</button>
   </div>;
 }
 
@@ -337,9 +343,10 @@ function ChargeForm({ d, params }: { d: Data; params: URLSearchParams }) {
   const qloc = LOCS.some(([k]) => k === params.get('loc')) ? params.get('loc')! : null;
   const init = () => ({ uuid: uuid(), loc: qloc ?? 'DadSolar', label: '', amount: '', kwh: '', from: null as number | null, to: null as number | null, credit: false, creditKm: '', paid_by: d.me as PaidBy, date: todaySG() });
   const [f, setF] = useState(() => { const dr = ls.get<ReturnType<typeof init> | null>(KEY, null); return dr ? (qloc ? { ...dr, loc: qloc } : dr) : init(); });
-  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [more, setMore] = useState(false);
   const undo = useUndo();
   const set = (p: Partial<typeof f>) => { const n = { ...f, ...p }; setF(n); ls.set(KEY, n); };
+  const solar = f.loc === 'DadSolar';
   const free = f.loc === 'DadSolar' || f.credit;
   const cents = free ? 0 : parseCents(f.amount);
   const kwh = Number(f.kwh);
@@ -362,26 +369,29 @@ function ChargeForm({ d, params }: { d: Data; params: URLSearchParams }) {
     {undo.last && <div class="confirm" data-testid="confirm"><span>{undo.last.text}</span><button class="btn sm" onClick={async () => { const u = undo.last!.uuid; undo.clear(); await softDeleteByDraft(u, true).catch(() => {}); refresh(); }}>Undo</button></div>}
     <div><span class="lbl">Where</span><div class="tiles" style="margin-top:8px">
       {LOCS.map(([k, l]) => <button data-testid={'loc-' + k} class={`chip ${f.loc === k ? 'on' : ''}`} onClick={() => set({ loc: k, credit: k === 'Supercharger' ? f.credit : false })}>{l}</button>)}</div></div>
-    <div class="grid2">
+    {solar ? <p class="sub" data-testid="solar-note">Free, solar. Just save.</p> : <div class="grid2">
       <div><span class="lbl">Amount</span><div class="amount"><span>S$</span>
         <input data-testid="amount" inputMode="decimal" placeholder="0.00" disabled={free} value={free ? '0.00' : f.amount} onInput={(e) => set({ amount: e.currentTarget.value })} class="num" style="font-size:48px" /></div>
-        {free && <span class="sub">{f.loc === 'DadSolar' ? 'Free, solar' : 'Paid by credit'}</span>}</div>
+        {free && <span class="sub">Paid by credit</span>}</div>
       <div><span class="lbl">kWh added</span><div class="amount"><input data-testid="kwh" inputMode="decimal" placeholder="0" value={f.kwh} onInput={(e) => set({ kwh: e.currentTarget.value })} class="num" style="font-size:48px" /><span style="font-size:20px">kWh</span></div>
         <span class="sub num">{rate ? `${sgd(Math.round(rate))} per kWh` : ' '}</span></div>
-    </div>
-    <div class="grid2">
-      {(['from', 'to'] as const).map((k) => <div><span class="lbl">Battery {k}</span><div class="seg" style="margin-top:8px">
-        <button class="chip" onClick={() => set({ [k]: step(f[k], -5) })}>−</button>
-        <span class="chip num" style="display:flex;align-items:center;justify-content:center">{f[k] == null ? 'Not set' : f[k] + '%'}</span>
-        <button class="chip" onClick={() => set({ [k]: step(f[k], 5) })}>+</button></div></div>)}
-    </div>
+    </div>}
     {f.loc === 'Supercharger' && left > 0 && <div class="seg"><button class={`chip ${f.credit ? 'on' : ''}`} onClick={() => set({ credit: !f.credit })}>Paid by credit · {left.toLocaleString('en-SG')} km left</button>
       {f.credit && <input class="in num" inputMode="numeric" placeholder={`${suggestKm} km`} value={f.creditKm} onInput={(e) => set({ creditKm: e.currentTarget.value.replace(/\D/g, '') })} style="min-height:64px" />}</div>}
     <div><span class="lbl">Paid by</span><div class="seg" style="margin-top:8px">
       {(['Marcus', 'Chesa', 'Joint'] as PaidBy[]).map((p) => <button class={`chip ${f.paid_by === p ? 'on' : ''}`} onClick={() => set({ paid_by: p })}>{p}</button>)}</div></div>
-    <label class="field"><span class="lbl">Location name, optional</span><input class="in" value={f.label} onInput={(e) => set({ label: e.currentTarget.value })} /></label>
     {err && <p>{err}</p>}
     <button data-testid="save" class="btn primary save" onClick={save} disabled={busy}>Save Charge</button>
+    <button class="linkbtn" data-testid="charge-more" onClick={() => setMore(!more)}>{more || f.from != null || f.to != null || f.label ? 'Battery % and place name' : 'Add battery %, place name…'}</button>
+    {(more || f.from != null || f.to != null || f.label) && <div class="stack">
+      <div class="grid2">
+        {(['from', 'to'] as const).map((k) => <div><span class="lbl">Battery {k}</span><div class="seg" style="margin-top:8px">
+          <button class="chip" onClick={() => set({ [k]: step(f[k], -5) })}>−</button>
+          <span class="chip num" style="display:flex;align-items:center;justify-content:center">{f[k] == null ? '–' : f[k] + '%'}</span>
+          <button class="chip" onClick={() => set({ [k]: step(f[k], 5) })}>+</button></div></div>)}
+      </div>
+      <label class="field"><span class="lbl">Place name, optional</span><input class="in" value={f.label} onInput={(e) => set({ label: e.currentTarget.value })} /></label>
+    </div>}
   </div>;
 }
 
@@ -404,9 +414,9 @@ function exportAll(d: Data, rows: Expense[], tag: string) {
     reminders: d.reminders, recurring_rules: d.rules, receipts: [] }, null, 2), 'application/json');
 }
 
-function Activity({ d }: { d: Data }) {
+function Activity({ d, params }: { d: Data; params: URLSearchParams }) {
   const [cat, setCat] = useState(''); const [pb, setPb] = useState(''); const [q, setQ] = useState(''); const [open, setOpen] = useState<string | null>(null);
-  const [showDeleted, setShowDeleted] = useState(false);
+  const showDeleted = params.get('deleted') === '1'; const [filters, setFilters] = useState(false);
   const [toast, setToast] = useState<Expense | null>(null);
   const cutoff = Date.now() - 30 * 864e5;
   const rows = useMemo(() => d.expenses.filter((e) => (showDeleted ? e.deleted_at && Date.parse(e.deleted_at) > cutoff : !e.deleted_at)
@@ -419,24 +429,24 @@ function Activity({ d }: { d: Data }) {
     if (deleted) setTimeout(() => setToast((t) => (t === e ? null : t)), 10000);
   }
   return <div>
-    <h1>Activity</h1>
-    <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:12px">
+    <div class="titlebar"><h1>{showDeleted ? 'Deleted, last 30 days' : 'Activity'}</h1>
+      {showDeleted ? <a class="btn sm" href="#/activity">Back</a> : <button class="btn sm" data-testid="filter" onClick={() => setFilters(!filters)}>Filter{cat || pb || q ? ' · on' : ''}</button>}</div>
+    {filters && <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:12px">
       <select class="in" value={cat} onChange={(e) => setCat(e.currentTarget.value)}><option value="">All categories</option>{CATS.map((c) => <option>{c}</option>)}</select>
       <select class="in" value={pb} onChange={(e) => setPb(e.currentTarget.value)}><option value="">Anyone paid</option><option>Marcus</option><option>Chesa</option><option>Joint</option></select>
       <input class="in" placeholder="Search note, vendor" value={q} onInput={(e) => setQ(e.currentTarget.value)} />
-      <div style="display:flex;gap:8px"><button class="btn sm" onClick={() => exportAll(d, rows, 'activity')}>Export</button>
-        <button class={`btn sm ${showDeleted ? 'primary' : ''}`} style={showDeleted ? 'width:auto;min-height:48px' : ''} onClick={() => setShowDeleted(!showDeleted)}>Deleted</button></div>
-    </div>
+    </div>}
     {rows.length === 0 && <p class="mute" style="padding:24px 0">{showDeleted ? 'Nothing deleted in the last 30 days.' : 'Expenses you add appear here.'}</p>}
     {[...months.entries()].map(([m, xs]) => <section>
       <div class="month-h"><span class="lbl" style="color:var(--t2)">{fmtMonth(m)}</span><span class="num sub">{sgd(xs.reduce((a, e) => a + (showDeleted ? 0 : signed(e)), 0))}</span></div>
       {xs.map((e) => <div>
         <div class="erow" data-testid="erow" onClick={() => setOpen(open === e.id ? null : e.id)}>
           <span class="mute num" style="font-size:15px">{fmtDate(e.date)}</span>
-          <span><span>{e.label || e.vendor || e.note || e.category}</span><br /><span class="mute" style="font-size:14px">{e.category} · {e.paid_by[0]}{e.split_type !== 'FiftyFifty' ? ` · ${e.split_type === 'CustomPercent' ? `M ${e.split_marcus_percent}%` : e.split_type === 'MarcusOnly' ? 'Marcus only' : 'Chesa only'}` : ''}{e.id.startsWith('local-') ? ' · waiting to sync' : ''}</span></span>
+          <span><span>{title(e)}</span><br /><span class="mute" style="font-size:14px">{e.category} · {e.paid_by}{e.split_type !== 'FiftyFifty' ? ` · ${e.split_type === 'CustomPercent' ? `M ${e.split_marcus_percent}%` : e.split_type === 'MarcusOnly' ? 'Marcus only' : 'Chesa only'}` : ''}{e.id.startsWith('local-') ? ' · waiting to sync' : ''}</span></span>
           <span class="amt num">{sgd(signed(e))}{e.currency === 'MYR' && <><br /><span class="mute" style="font-size:14px">RM {(e.amount_cents / 100).toFixed(2)} @ {e.fx_rate_to_sgd}</span></>}</span>
         </div>
         {open === e.id && <div class="detail">
+          {e.label && e.label !== title(e) && <p data-testid="full-label">{e.label}</p>}
           {e.note && <p class="sub">{e.note}</p>}
           <p class="mute" style="font-size:14px;margin:8px 0">{[e.vendor, e.subcategory, e.odometer_km && `${e.odometer_km} km`, e.tags.join(', ')].filter(Boolean).join(' · ')}</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap">{showDeleted ? <button class="btn sm" onClick={() => del(e, false)}>Restore</button> : <>
@@ -480,29 +490,26 @@ function SettlementScreen({ d }: { d: Data }) {
     enqueue({ t: 'settle', row: { client_draft_uuid: uuid(), date, from_person: from, to_person: from === 'Chesa' ? 'Marcus' : 'Chesa', amount_cents: cents, note: note || null } });
     setAmt(''); setNote(''); await refresh(); setBusy(false);
   }
-  const line = (l: string, v: number) => <div class="row"><span class="sub">{l}</span><span class="num">{sgd(v)}</span></div>;
+  const lines = ([['Marcus paid', w.marcusPaid], ["Marcus's half", w.marcusShare], ['Chesa paid', w.chesaPaid], ["Chesa's half", w.chesaShare],
+    ['Already settled, Chesa to Marcus', w.chesaToMarcus], ['Already settled, Marcus to Chesa', w.marcusToChesa]] as [string, number][]).filter(([, v]) => v !== 0);
   return <div class="cols">
     <div>
-      <h1>Settlement</h1>
-      <div class="hero" style="cursor:default;padding-top:8px"><div class="lbl">Balance</div><div class="big num" style="font-size:44px">{balanceSentence(w.balance)}</div></div>
-      <div class="card"><span class="lbl">The working</span>
-        {line('Marcus paid', w.marcusPaid)}{line('Marcus share', w.marcusShare)}{line('Chesa paid', w.chesaPaid)}{line('Chesa share', w.chesaShare)}
-        {line('Settled, Chesa to Marcus', w.chesaToMarcus)}{line('Settled, Marcus to Chesa', w.marcusToChesa)}
-        <p class="mute" style="margin-top:12px;font-size:15px">Balance = Marcus paid − Marcus share − settled Chesa to Marcus + settled Marcus to Chesa = {sgd(w.balance)}. Joint payments count half each. Settlements are not car costs.</p>
-      </div>
-    </div>
-    <div>
-      <h2>Settle Up</h2>
-      <div class="card stack">
+      <h1>Settle up</h1>
+      <div class="hero" style="cursor:default;padding:0 4px 24px"><div class="big num" style="font-size:44px" data-testid="balance">{balanceSentence(w.balance)}</div></div>
+      {w.balance !== 0 && <div class="card stack">
         <div class="seg">{(['Chesa', 'Marcus'] as Person[]).map((p) => <button class={`chip ${from === p ? 'on' : ''}`} onClick={() => setFrom(p)}>{p} pays</button>)}</div>
         <div class="amount"><span>S$</span><input class="num" inputMode="decimal" placeholder={(Math.abs(w.balance) / 100).toFixed(2)} value={amt} onInput={(e) => setAmt(e.currentTarget.value)} style="font-size:44px" /></div>
-        <input class="in" type="date" value={date} onInput={(e) => setDate(e.currentTarget.value)} />
-        <input class="in" placeholder="Note" value={note} onInput={(e) => setNote(e.currentTarget.value)} />
-        <button class="btn primary" onClick={settle} disabled={busy || cents <= 0}>Settle Up {sgd(cents)}</button>
-      </div>
-      <h2>History</h2>
-      {live(d.settlements).length === 0 && <p class="mute">Settle up payments appear here.</p>}
-      {live(d.settlements).map((s) => <div class="row"><span>{s.from_person} to {s.to_person}<br /><span class="mute" style="font-size:14px">{fmtDate(s.date)}{s.note ? ` · ${s.note}` : ''}</span></span><span class="num">{sgd(s.amount_cents)}</span></div>)}
+        <div class="grid2"><DateBtn value={date} onPick={setDate} /><input class="in" placeholder="Note, optional" value={note} onInput={(e) => setNote(e.currentTarget.value)} /></div>
+        <button class="btn primary" data-testid="settle-btn" onClick={settle} disabled={busy || cents <= 0}>Mark {sgd(cents)} as paid</button>
+      </div>}
+    </div>
+    <div>
+      <details class="card" data-testid="working"><summary class="lbl" style="cursor:pointer;min-height:44px;display:flex;align-items:center">How this is worked out</summary>
+        {lines.map(([l, v]) => <div class="row"><span class="sub">{l}</span><span class="num">{sgd(v)}</span></div>)}
+        <p class="mute" style="margin-top:12px;font-size:15px">Each cost is split 50/50 unless the record says otherwise. Whoever paid more than their half is owed the difference.</p>
+      </details>
+      {live(d.settlements).length > 0 && <><h2>Past payments</h2>
+        {live(d.settlements).map((s) => <div class="row"><span>{s.from_person} to {s.to_person}<br /><span class="mute" style="font-size:14px">{fmtDate(s.date)}{s.note ? ` · ${s.note}` : ''}</span></span><span class="num">{sgd(s.amount_cents)}</span></div>)}</>}
     </div>
   </div>;
 }
@@ -510,31 +517,23 @@ function SettlementScreen({ d }: { d: Data }) {
 // ---------------- car ----------------
 const TO_CONFIRM: [string, string, string][] = [['plate', 'Plate', 'text'], ['registration_date', 'Registration date', 'date'], ['coe_expiry_date', 'COE expiry (registration + 10 years)', 'date'],
   ['delivery_date', 'Delivery date', 'date'], ['build_year', 'Build year', 'number'], ['first_instalment_date', 'First instalment date (bank letter)', 'date'],
-  ['insurance_premium_cents', 'Insurance premium (cents)', 'number'], ['insurance_start_date', 'Insurance start', 'date'], ['insurance_renewal_date', 'Insurance renewal', 'date'],
-  ['road_tax_renewal_date', 'Road tax renewal', 'date'], ['odometer_at_delivery_km', 'Odometer at delivery km', 'number']];
+  ['insurance_premium_cents', 'Insurance premium, S$', 'money'], ['insurance_start_date', 'Insurance start', 'date'], ['insurance_renewal_date', 'Insurance renewal', 'date'],
+  ['road_tax_renewal_date', 'Road tax renewal', 'date'], ['odometer_at_delivery_km', 'Odometer at delivery, km', 'number']];
 const PROFILE: [string, string, string][] = [['order_number', 'Order number', 'text'], ['model_label', 'Model', 'text'], ['colour', 'Colour', 'text'], ['interior', 'Interior', 'text'],
-  ['wheels', 'Wheels', 'text'], ['coe_category', 'COE category', 'text'], ['purchase_price_cents', 'Final price (cents)', 'number'], ['final_price_note', 'Price note', 'text'],
-  ['coe_rebate_level_cents', 'COE rebate level (cents)', 'number'], ['coe_rebate_received_cents', 'COE rebate received (cents)', 'number'], ['lender', 'Lender', 'text'],
-  ['loan_percent', 'Loan percent', 'number'], ['flat_rate_bp', 'Flat rate (basis points, 138 = 1.38%)', 'number'], ['tenure_months', 'Tenure months', 'number'],
-  ['loan_principal_cents', 'Loan principal, paperwork (cents)', 'number'], ['loan_interest_cents', 'Total interest, paperwork (cents)', 'number'],
-  ['loan_total_cents', 'Total loan payment, paperwork (cents)', 'number'], ['loan_monthly_cents', 'Monthly instalment, paperwork (cents)', 'number'], ['loan_source', 'Loan figures source', 'text'],
-  ['insurance_provider', 'Insurer', 'text'], ['road_tax_annual_cents', 'Road tax annual (cents)', 'number'], ['supercharging_credit_km_total', 'Supercharging credit km', 'number'],
-  ['consumption_kwh_per_100km', 'Consumption kWh per 100 km', 'number'], ['assumed_sc_rate_cents', 'Assumed Supercharger rate (cents per kWh)', 'number']];
+  ['wheels', 'Wheels', 'text'], ['coe_category', 'COE category', 'text'], ['purchase_price_cents', 'Final price, S$', 'money'], ['final_price_note', 'Price note', 'text'],
+  ['coe_rebate_level_cents', 'COE rebate level, S$', 'money'], ['coe_rebate_received_cents', 'COE rebate received, S$', 'money'], ['lender', 'Lender', 'text'],
+  ['loan_percent', 'Loan, % of price', 'number'], ['flat_rate_bp', 'Flat interest rate, % a year', 'pct'], ['tenure_months', 'Loan length, months', 'number'],
+  ['loan_principal_cents', 'Loan amount from paperwork, S$', 'money'], ['loan_interest_cents', 'Total interest from paperwork, S$', 'money'],
+  ['loan_total_cents', 'Total loan payment from paperwork, S$', 'money'], ['loan_monthly_cents', 'Monthly instalment from paperwork, S$', 'money'], ['loan_source', 'Where the loan figures come from', 'text'],
+  ['insurance_provider', 'Insurer', 'text'], ['road_tax_annual_cents', 'Road tax a year, S$', 'money'], ['supercharging_credit_km_total', 'Supercharging credit, km', 'number'],
+  ['consumption_kwh_per_100km', 'Energy use, kWh per 100 km', 'number'], ['assumed_sc_rate_cents', 'Assumed Supercharger rate, cents per kWh', 'number']];
 const LOAN_KEYS = ['purchase_price_cents', 'loan_percent', 'flat_rate_bp', 'tenure_months', 'first_instalment_date', 'loan_principal_cents', 'loan_interest_cents', 'loan_total_cents', 'loan_monthly_cents'];
 
 function Car({ d }: { d: Data }) {
   const p = d.profile!;
-  const [form, setForm] = useState<Row>(p); const [msg, setMsg] = useState('');
-  const [showAll, setShowAll] = useState(false);
+  const [showSched, setShowSched] = useState(false); const [msg, setMsg] = useState('');
   const paidSeqs = new Set(d.paid.map((r) => r.seq));
   const t = loanTerms(p as any), sched = loanSchedule(p as any), pos = purchasePosition(p as any, d.expenses, paidSeqs);
-  const loanChanged = LOAN_KEYS.some((k) => String(form[k] ?? '') !== String(p[k] ?? ''));
-  async function saveProfile() {
-    const patch: Row = {}; for (const [k, , ty] of [...TO_CONFIRM, ...PROFILE]) { const v = form[k]; patch[k] = v === '' || v == null ? null : ty === 'number' ? Number(v) : v; }
-    if (patch.registration_date && !patch.coe_expiry_date) patch.coe_expiry_date = String(Number(patch.registration_date.slice(0, 4)) + 10) + patch.registration_date.slice(4);
-    const { error } = await sb.from('car_profile').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1);
-    setMsg(error ? error.message : 'Saved.'); refresh();
-  }
   async function markPaid(seq: number, amount: number, due: string | null, paid_by: PaidBy) {
     const row = { client_draft_uuid: uuid(), date: due && due <= todaySG() ? due : todaySG(), category: PURCHASE, kind: 'instalment', label: `Loan instalment ${seq} of ${p.tenure_months}`,
       amount_cents: amount, amount_sgd_cents: amount, paid_by, split_type: 'FiftyFifty' };
@@ -548,57 +547,88 @@ function Car({ d }: { d: Data }) {
     await sb.from('expenses').update({ deleted_at: new Date().toISOString() }).eq('id', r.expense_id); refresh();
   }
   const [instPayer, setInstPayer] = useState<PaidBy>('Joint');
-  const field = ([k, l, ty]: [string, string, string]) => <label class="field"><span class="lbl">{l}</span>
-    <input class="in num" type={ty as any} value={form[k] ?? ''} placeholder={TO_CONFIRM.some((x) => x[0] === k) ? 'TO CONFIRM' : ''} onInput={(e) => setForm({ ...form, [k]: e.currentTarget.value })} /></label>;
-  const lineSum = d.priceLines.reduce((a, l) => a + Number(l.amount_cents), 0);
   const remind = (r: Row) => { if (!r.due_date) return r.pending_label; const n = daysBetween(todaySG(), r.due_date); return n < 0 ? `Overdue by ${-n} days` : n <= r.window_days ? `Due in ${n} days · ${fmtDate(r.due_date)}` : fmtDate(r.due_date); };
+  const fact = (l: string, v: unknown) => <div class="row"><span class="sub">{l}</span><span class="num" style="text-align:right">{v == null || v === '' ? <span class="mute">Not yet</span> : String(v)}</span></div>;
+  const money = (l: string, v: number) => <div class="row"><span class="sub">{l}</span><span class="num">{sgd(v)}</span></div>;
+  const reminders = d.reminders.filter((r) => !r.dismissed_at);
   return <div>
-    <h1>Car</h1>
+    <div class="titlebar"><h1>Car</h1><a class="btn sm" href="#/settings" data-testid="to-settings">Settings</a></div>
+    <div class="cols">
+      <div>
+        <div class="card" data-testid="car-facts"><span class="lbl">{p.model_label}</span>
+          {fact('Colour and wheels', [p.colour, p.wheels].filter(Boolean).join(' · '))}
+          {fact('Plate', p.plate)}{fact('Delivery', p.delivery_date && fmtDate(p.delivery_date))}{fact('Insurer', p.insurance_provider)}{fact('Order', p.order_number)}
+        </div>
+        <div class="card" data-testid="car-price"><span class="lbl">What the car costs</span>
+          {money('Price', p.purchase_price_cents)}{money('Downpayment', t.downpayment)}{money('Loan amount', t.principal)}{money('Interest over the loan', t.interest)}
+          {p.final_price_note && <p class="mute" style="margin-top:8px;font-size:14px">{p.final_price_note}</p>}
+        </div>
+      </div>
+      <div>
+        <div class="card" data-testid="car-loan"><span class="lbl">Loan · {loanLabel(p)}</span>
+          {money('Monthly', t.monthly)}
+          <div class="row"><span class="sub">Paid</span><span class="num">{pos.paidCount} of {p.tenure_months}</span></div>
+          {money('Loan left to repay', pos.loanRemaining)}
+          {pos.remainingDownpayment > 0 && money('Still to pay before collection', pos.remainingDownpayment)}
+          <button class="btn ghost sm" data-testid="show-schedule" style="margin-top:12px" onClick={() => setShowSched(!showSched)}>{showSched ? 'Hide schedule' : 'Show schedule'}</button>
+          {showSched && <div style="margin-top:12px">
+            <p class="sub">{t.monthly === t.last ? `${p.tenure_months} × ${sgd(t.monthly)}` : `${p.tenure_months - 1} × ${sgd(t.monthly)}, final ${sgd(t.last)}`}. Total {sgd(t.total)}.</p>
+            <span class="lbl" style="margin-top:12px">Paid from</span>
+            <div class="seg" style="margin:8px 0 12px">{(['Marcus', 'Chesa', 'Joint'] as PaidBy[]).map((x) => <button class={`chip ${instPayer === x ? 'on' : ''}`} onClick={() => setInstPayer(x)}>{x}</button>)}</div>
+            {sched.map((i) => <div class="row"><span class="num">{i.seq}. {i.due ? fmtDate(i.due) : 'Date pending'}</span><span class="num">{sgd(i.amount)}</span>
+              {paidSeqs.has(i.seq) ? <button class="btn sm on" style="width:auto;min-height:48px" onClick={() => unmark(i.seq)}>Paid</button>
+                : <button class="btn sm" onClick={() => markPaid(i.seq, i.amount, i.due, instPayer)}>Mark paid</button>}</div>)}
+            {msg && <p class="sub">{msg}</p>}
+          </div>}
+        </div>
+        {reminders.length > 0 && <div class="card"><span class="lbl">Coming up</span>{reminders.map((r) => <div class="row"><span>{r.label}<br /><span class="mute" style="font-size:14px">{remind(r)}</span></span>
+          <button class="btn sm ghost" onClick={async () => { await sb.from('reminders').update({ dismissed_at: new Date().toISOString() }).eq('id', r.id); refresh(); }}>Dismiss</button></div>)}</div>}
+      </div>
+    </div>
+  </div>;
+}
+
+function Settings({ d }: { d: Data }) {
+  const p = d.profile!;
+  const [form, setForm] = useState<Row>(p); const [msg, setMsg] = useState('');
+  const loanChanged = LOAN_KEYS.some((k) => String(form[k] ?? '') !== String(p[k] ?? ''));
+  async function saveProfile() {
+    const patch: Row = {}; for (const [k] of [...TO_CONFIRM, ...PROFILE]) patch[k] = form[k] === '' ? null : form[k];
+    if (patch.registration_date && !patch.coe_expiry_date) patch.coe_expiry_date = String(Number(patch.registration_date.slice(0, 4)) + 10) + patch.registration_date.slice(4);
+    const { error } = await sb.from('car_profile').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1);
+    setMsg(error ? error.message : 'Saved.'); refresh();
+  }
+  const field = ([k, l, ty]: [string, string, string]) => <label class="field"><span class="lbl">{l}</span>
+    <input class="in num" type={(ty === 'date' ? 'date' : 'text') as any} inputMode={(ty === 'money' || ty === 'pct' ? 'decimal' : ty === 'number' ? 'numeric' : undefined) as any}
+      value={toInput(form[k], ty)} placeholder={ty === 'date' ? '' : 'Not yet'} data-testid={'f-' + k}
+      onChange={(e) => setForm({ ...form, [k]: fromInput(e.currentTarget.value, ty) })} /></label>;
+  const lineSum = d.priceLines.reduce((a, l) => a + Number(l.amount_cents), 0);
+  return <div>
+    <div class="titlebar"><h1>Settings</h1><a class="btn sm" href="#/car">Back to car</a></div>
     <div class="cols">
       <div>
         <h2>Fill in at delivery</h2>
         <div class="card"><div class="grid2">{TO_CONFIRM.map(field)}</div></div>
-        <h2>Car profile</h2>
+        <h2>Car and loan details</h2>
         <div class="card"><div class="grid2">{PROFILE.map(field)}</div>
           <p class="mute" style="font-size:15px">{p.seller} · {p.battery} · {p.obu} · Autopilot {p.autopilot}</p>
           <p class="mute" style="font-size:15px;margin-top:8px">{p.notes}</p></div>
-        {loanChanged && <p class="sub">Changing loan terms regenerates unpaid instalments. Paid instalments never change.</p>}
-        <button class="btn primary save" onClick={saveProfile}>Save car profile</button>{msg && <p class="sub" style="margin-top:8px">{msg}</p>}
-        <h2>Price breakdown, ex-COE</h2>
-        <div class="card">{d.priceLines.map((l) => <div class="row"><span class="sub">{l.label}{l.note ? <span class="mute"> · {l.note}</span> : ''}</span>
-          <input class="in num" style="width:160px;text-align:right;min-height:48px" value={(Number(l.amount_cents) / 100).toFixed(2)}
-            onChange={async (e) => { const c = parseCents(e.currentTarget.value.replace('-', '')); if (c == null) return; await sb.from('price_lines').update({ amount_cents: e.currentTarget.value.trim().startsWith('-') ? -c : c }).eq('id', l.id); refresh(); }} /></div>)}
-          <div class="row"><span>Total cash price ex-COE</span><span class="num">{sgd(lineSum)}</span></div>
-          {p.final_price_note && <p class="sub" style="margin-top:8px">{p.final_price_note}</p>}</div>
+        {loanChanged && <p class="sub">Changing loan terms changes unpaid instalments. Paid instalments never change.</p>}
+        <button class="btn primary save" data-testid="save-profile" onClick={saveProfile}>Save details</button>{msg && <p class="sub" style="margin-top:8px">{msg}</p>}
       </div>
       <div>
-        <h2>Purchase position</h2>
-        <div class="card">
-          {[['Price', p.purchase_price_cents], ['COE rebate received', -p.coe_rebate_received_cents], ['Effective price', pos.effectivePrice], ['Downpayment (' + (100 - p.loan_percent) + '%)', t.downpayment],
-            ['Downpayment still to pay', pos.remainingDownpayment], ['Paid toward car', pos.paidTowardCar], ['Loan amount', t.principal], ['Total interest, flat', t.interest],
-            ['Loan remaining, with interest', pos.loanRemaining], ['Principal remaining, before bank charges', pos.principalRemaining]].map(([l, v]) =>
-            <div class="row"><span class="sub">{l}</span><span class="num">{sgd(v as number)}</span></div>)}
-        </div>
-        <h2>Loan schedule · {p.tenure_months} instalments</h2>
-        {p.loan_source && <p class="sub" data-testid="loan-source">{p.loan_source}</p>}
-        <div class="card">
-          <p class="sub">{t.monthly === t.last ? `${p.tenure_months} × ${sgd(t.monthly)}` : `${p.tenure_months - 1} × ${sgd(t.monthly)}, final ${sgd(t.last)}`}. Total {sgd(t.total)}.</p>
-          {!p.first_instalment_date && <p style="margin-top:8px">Loan rule paused: Waiting for bank letter.</p>}
-          <div class="seg" style="margin:12px 0">{(['Marcus', 'Chesa', 'Joint'] as PaidBy[]).map((x) => <button class={`chip ${instPayer === x ? 'on' : ''}`} onClick={() => setInstPayer(x)}>{x}</button>)}</div>
-          {(showAll ? sched : sched.slice(0, 6)).map((i) => <div class="row"><span class="num">{i.seq}. {i.due ? fmtDate(i.due) : 'Date pending'}</span><span class="num">{sgd(i.amount)}</span>
-            {paidSeqs.has(i.seq) ? <button class="btn sm primary" style="width:auto;min-height:48px" onClick={() => unmark(i.seq)}>Paid</button>
-              : <button class="btn sm" onClick={() => markPaid(i.seq, i.amount, i.due, instPayer)}>Mark paid</button>}</div>)}
-          <button class="btn ghost sm" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer' : `Show all ${sched.length}`}</button>
-        </div>
-        <h2>Reminders</h2>
-        <div class="card">{d.reminders.filter((r) => !r.dismissed_at).map((r) => <div class="row"><span>{r.label}<br /><span class="mute" style="font-size:14px">{remind(r)}</span></span>
-          <button class="btn sm ghost" onClick={async () => { await sb.from('reminders').update({ dismissed_at: new Date().toISOString() }).eq('id', r.id); refresh(); }}>Dismiss</button></div>)}</div>
-        <h2>Recurring rules</h2>
-        <div class="card">{d.rules.map((r) => <div class="row"><span>{r.label}<br /><span class="mute" style="font-size:14px">{r.frequency}{r.auto_create ? ', creates the expense' : ', reminder only'}{r.paused ? ` · ${r.paused_label}` : ''}</span></span>
-          <span class="num">{r.amount_cents ? sgd(r.amount_cents) : 'Variable'}</span></div>)}</div>
-        <h2>Export and account</h2>
-        <div class="card" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onClick={() => exportAll(d, d.expenses, 'all')}>Export</button>
-          <button class="btn ghost" onClick={() => sb.auth.signOut()}>Sign out</button></div>
+        <h2>Price breakdown, before COE</h2>
+        <div class="card">{d.priceLines.map((l) => <div class="row"><span class="sub">{l.label}{l.note ? <span class="mute"> · {l.note}</span> : ''}</span>
+          <input class="in num" inputMode="decimal" style="width:150px;text-align:right;min-height:48px" value={(Number(l.amount_cents) / 100).toFixed(2)}
+            onChange={async (e) => { const c = fromInput(e.currentTarget.value, 'money'); if (c == null) return; await sb.from('price_lines').update({ amount_cents: c }).eq('id', l.id); refresh(); }} /></div>)}
+          <div class="row"><span>Total before COE</span><span class="num">{sgd(lineSum)}</span></div></div>
+        <h2>Repeating costs</h2>
+        <div class="card">{d.rules.map((r) => <div class="row"><span>{r.label}<br /><span class="mute" style="font-size:14px">{r.frequency}{r.auto_create ? ', logs itself' : ', reminder only'}{r.paused ? ` · ${r.paused_label}` : ''}</span></span>
+          <span class="num">{r.amount_cents ? sgd(r.amount_cents) : 'Varies'}</span></div>)}</div>
+        <h2>Data and account</h2>
+        <div class="card" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-testid="export" onClick={() => exportAll(d, d.expenses, 'all')}>Export</button>
+          <a class="btn" href="#/activity?deleted=1" data-testid="deleted">Deleted items</a>
+          <button class="btn ghost" data-testid="signout" onClick={() => sb.auth.signOut()}>Sign out</button></div>
       </div>
     </div>
   </div>;

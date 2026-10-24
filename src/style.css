@@ -91,3 +91,15 @@ td.r,th.r{text-align:right}
  .quick .chip{min-height:72px}
  .hero .big{font-size:96px}
 }
+/* audit round */
+.carline{font-size:15px}
+.titlebar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px}.titlebar h1{margin:0}
+.linkbtn{background:none;border:0;color:var(--t2);font-size:15px;text-decoration:underline;text-underline-offset:4px;min-height:44px;padding:0;cursor:pointer;display:block}
+.ghostchip{background:transparent}
+.datebtn{position:relative;display:flex;align-items:center;min-height:64px;cursor:pointer}
+.datebtn input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+.btn.on{background:var(--t1);color:#000;border-color:var(--t1)}
+details>summary{list-style:none}details>summary::-webkit-details-marker{display:none}details[open]>summary{margin-bottom:8px}
+@media (max-width:600px){.grid2{grid-template-columns:1fr}.grid2 .field{margin:8px 0}}
+@media (min-width:1000px){.quick .chip{font-size:20px;min-height:88px}.carline{font-size:17px}}
+@media (max-width:420px){.addwrap h1{margin-bottom:8px;font-size:22px}.addwrap.stack>*+*{margin-top:14px}.addwrap .amount{padding:2px 0 6px}.addwrap .amount input{font-size:48px}.addwrap .amount span{font-size:34px}.addwrap .chip{min-height:52px}.addwrap .seg .chip,.addwrap .datebtn{min-height:56px}}
