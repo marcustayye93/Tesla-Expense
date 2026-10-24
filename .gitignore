@@ -1,0 +1,7 @@
+node_modules
+dist
+private
+review
+*.local
+test-results
+public/icon-*.png
