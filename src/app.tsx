@@ -72,17 +72,33 @@ function App() {
 }
 
 // ---------------- sign in ----------------
+/** Name-only sign-in, Marcus's choice. The name maps to that person's allowlisted account
+ *  (email looked up server-side) and a fixed derived password; RLS still guards every row. */
+const NAMES = ['marcus', 'chesa'];
+export const derivedPassword = (name: string) => `Tesla-Expense:${name}:2026`;
 function SignIn({ onIn }: { onIn: () => void }) {
-  const [email, setEmail] = useState(''); const [pw, setPw] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
-  return <form class="signin stack" onSubmit={async (e) => {
-    e.preventDefault(); setBusy(true); setErr('');
-    const { error } = await sb.auth.signInWithPassword({ email: email.trim(), password: pw });
-    setBusy(false); if (error) setErr('Email or password is not right.'); else onIn();
-  }}>
+  const [word, setWord] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [until, setUntil] = useState(ls.get('yl-lock', 0));
+  async function go(e: Event) {
+    e.preventDefault(); if (busy) return;
+    if (Date.now() < until) return setErr('Too many tries. Wait a minute.');
+    const name = word.trim().toLowerCase(); setBusy(true); setErr('');
+    let ok = false;
+    if (NAMES.includes(name)) {
+      const { data: email } = await sb.rpc('signin_email', { p_name: name });
+      if (email) ok = !(await sb.auth.signInWithPassword({ email, password: derivedPassword(name) })).error;
+    } else await new Promise((r) => setTimeout(r, 800)); // same feel as a real attempt
+    setBusy(false);
+    if (ok) { ls.del('yl-fails'); onIn(); return; }
+    const fails = ls.get('yl-fails', 0) + 1; ls.set('yl-fails', fails);
+    if (fails >= 5) { const t = Date.now() + 60000; ls.set('yl-lock', t); ls.set('yl-fails', 0); setUntil(t); setErr('Too many tries. Wait a minute.'); }
+    else setErr('Not recognised.');
+    setWord('');
+  }
+  return <form class="signin stack" onSubmit={go}>
     <div class="wordmark">Tesla Expense<b>.</b></div>
-    <p class="sub">Private. Sign in to continue.</p>
-    <label class="field"><span class="lbl">Email</span><input class="in" type="email" autocomplete="username" value={email} onInput={(e) => setEmail(e.currentTarget.value)} required /></label>
-    <label class="field"><span class="lbl">Password</span><input class="in" type="password" autocomplete="current-password" value={pw} onInput={(e) => setPw(e.currentTarget.value)} required /></label>
+    <p class="sub">Private.</p>
+    <input class="in" data-testid="word" type="password" aria-label="Password" placeholder="Password" autocomplete="off" autocapitalize="off" spellcheck={false} value={word} onInput={(e) => setWord(e.currentTarget.value)} required />
     {err && <p>{err}</p>}
     <button class="btn primary" disabled={busy}>Sign in</button>
   </form>;
