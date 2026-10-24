@@ -516,9 +516,11 @@ const PROFILE: [string, string, string][] = [['order_number', 'Order number', 't
   ['wheels', 'Wheels', 'text'], ['coe_category', 'COE category', 'text'], ['purchase_price_cents', 'Final price (cents)', 'number'], ['final_price_note', 'Price note', 'text'],
   ['coe_rebate_level_cents', 'COE rebate level (cents)', 'number'], ['coe_rebate_received_cents', 'COE rebate received (cents)', 'number'], ['lender', 'Lender', 'text'],
   ['loan_percent', 'Loan percent', 'number'], ['flat_rate_bp', 'Flat rate (basis points, 138 = 1.38%)', 'number'], ['tenure_months', 'Tenure months', 'number'],
+  ['loan_principal_cents', 'Loan principal, paperwork (cents)', 'number'], ['loan_interest_cents', 'Total interest, paperwork (cents)', 'number'],
+  ['loan_total_cents', 'Total loan payment, paperwork (cents)', 'number'], ['loan_monthly_cents', 'Monthly instalment, paperwork (cents)', 'number'], ['loan_source', 'Loan figures source', 'text'],
   ['insurance_provider', 'Insurer', 'text'], ['road_tax_annual_cents', 'Road tax annual (cents)', 'number'], ['supercharging_credit_km_total', 'Supercharging credit km', 'number'],
   ['consumption_kwh_per_100km', 'Consumption kWh per 100 km', 'number'], ['assumed_sc_rate_cents', 'Assumed Supercharger rate (cents per kWh)', 'number']];
-const LOAN_KEYS = ['purchase_price_cents', 'loan_percent', 'flat_rate_bp', 'tenure_months', 'first_instalment_date'];
+const LOAN_KEYS = ['purchase_price_cents', 'loan_percent', 'flat_rate_bp', 'tenure_months', 'first_instalment_date', 'loan_principal_cents', 'loan_interest_cents', 'loan_total_cents', 'loan_monthly_cents'];
 
 function Car({ d }: { d: Data }) {
   const p = d.profile!;
@@ -578,6 +580,7 @@ function Car({ d }: { d: Data }) {
             <div class="row"><span class="sub">{l}</span><span class="num">{sgd(v as number)}</span></div>)}
         </div>
         <h2>Loan schedule · {p.tenure_months} instalments</h2>
+        {p.loan_source && <p class="sub" data-testid="loan-source">{p.loan_source}</p>}
         <div class="card">
           <p class="sub">{t.monthly === t.last ? `${p.tenure_months} × ${sgd(t.monthly)}` : `${p.tenure_months - 1} × ${sgd(t.monthly)}, final ${sgd(t.last)}`}. Total {sgd(t.total)}.</p>
           {!p.first_instalment_date && <p style="margin-top:8px">Loan rule paused: Waiting for bank letter.</p>}

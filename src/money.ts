@@ -106,15 +106,20 @@ export interface LoanProfile {
   flat_rate_bp: number; // basis points per year, 1.38% = 138
   tenure_months: number;
   first_instalment_date: string | null;
+  // Paperwork figures (dealer sheet, later the bank letter). Each one, when set, wins over the derived value.
+  loan_principal_cents?: number | null;
+  loan_interest_cents?: number | null;
+  loan_total_cents?: number | null;
+  loan_monthly_cents?: number | null;
 }
 
 export function loanTerms(p: LoanProfile) {
-  const principal = Math.round((p.purchase_price_cents * Number(p.loan_percent)) / 100);
+  const principal = p.loan_principal_cents ?? Math.round((p.purchase_price_cents * Number(p.loan_percent)) / 100);
   const downpayment = p.purchase_price_cents - principal;
   // flat interest = principal x rate x years = principal x bp/10000 x months/12
-  const interest = Math.round((principal * p.flat_rate_bp * p.tenure_months) / 120000);
-  const total = principal + interest;
-  const monthly = Math.floor(total / p.tenure_months);
+  const interest = p.loan_interest_cents ?? Math.round((principal * p.flat_rate_bp * p.tenure_months) / 120000);
+  const total = p.loan_total_cents ?? principal + interest;
+  const monthly = p.loan_monthly_cents ?? Math.floor(total / p.tenure_months);
   const last = total - monthly * (p.tenure_months - 1);
   return { principal, downpayment, interest, total, monthly, last };
 }
