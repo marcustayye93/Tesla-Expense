@@ -75,7 +75,7 @@ function App() {
       <div class="wm"><div class="wordmark">Tesla Expense<b>.</b></div>{pending > 0 && <div class="sync" style="margin-top:8px">{pending} waiting to sync</div>}</div>
       {nav('home', 'Home')}{nav('activity', 'Activity')}{nav('add', '+', 'add')}{nav('charging', 'Charging')}{nav('car', 'Car')}
     </nav>
-    <main>{pending > 0 && <div class="sync mobile-sync" style="margin-bottom:12px">{pending} waiting to sync</div>}{page}</main>
+    <main>{route && route !== 'home' && <button class="backbtn" aria-label="Back" data-testid="back" onClick={() => (history.length > 1 ? history.back() : (location.hash = '#/home'))}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>}{pending > 0 && <div class="sync mobile-sync" style="margin-bottom:12px">{pending} waiting to sync</div>}{page}</main>
     <SavedBar />
   </div>;
 }
