@@ -76,6 +76,7 @@ function App() {
       {nav('home', 'Home')}{nav('activity', 'Activity')}{nav('add', '+', 'add')}{nav('charging', 'Charging')}{nav('car', 'Car')}
     </nav>
     <main>{pending > 0 && <div class="sync mobile-sync" style="margin-bottom:12px">{pending} waiting to sync</div>}{page}</main>
+    <SavedBar />
   </div>;
 }
 
@@ -228,10 +229,16 @@ const fromExpense = (e: Expense, me: Person, keepId: boolean): Draft => ({ ...bl
   split_pct: e.split_marcus_percent != null ? String(e.split_marcus_percent) : '', currency: e.currency, fx: e.fx_rate_to_sgd ? String(e.fx_rate_to_sgd) : '',
   tags: e.tags.join(', '), is_refund: e.is_refund, more: true });
 
+function SavedBar() {
+  const [on, setOn] = useState(0);
+  useEffect(() => { let t = 0; const h = () => { setOn(Date.now()); clearTimeout(t); t = setTimeout(() => setOn(0), 2500) as any; }; window.addEventListener('yl-saved', h); return () => { window.removeEventListener('yl-saved', h); clearTimeout(t); }; }, []);
+  return on ? <div class="savedbar" role="status" data-testid="saved-bar">Saved successfully</div> : null;
+}
+
 function useUndo() {
   const [last, setLast] = useState<{ uuid: string; text: string } | null>(null);
   const t = useRef<number>(0);
-  const show = (uuid: string, text: string) => { setLast({ uuid, text }); clearTimeout(t.current); t.current = setTimeout(() => setLast(null), 10000) as any; };
+  const show = (uuid: string, text: string) => { window.dispatchEvent(new Event('yl-saved')); setLast({ uuid, text }); clearTimeout(t.current); t.current = setTimeout(() => setLast(null), 10000) as any; };
   return { last, show, clear: () => setLast(null) };
 }
 

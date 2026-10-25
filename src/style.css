@@ -103,3 +103,6 @@ details>summary{list-style:none}details>summary::-webkit-details-marker{display:
 @media (max-width:600px){.grid2{grid-template-columns:1fr}.grid2 .field{margin:8px 0}}
 @media (min-width:1000px){.quick .chip{font-size:20px;min-height:88px}.carline{font-size:17px}}
 @media (max-width:420px){.addwrap h1{margin-bottom:8px;font-size:22px}.addwrap.stack>*+*{margin-top:14px}.addwrap .amount{padding:2px 0 6px}.addwrap .amount input{font-size:48px}.addwrap .amount span{font-size:34px}.addwrap .chip{min-height:52px}.addwrap .seg .chip,.addwrap .datebtn{min-height:56px}}
+
+.savedbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:#1f9d55;color:#fff;text-align:center;font-weight:600;padding:14px 16px calc(14px + env(safe-area-inset-bottom));animation:ylsaved .2s ease-out}
+@keyframes ylsaved{from{transform:translateY(100%)}to{transform:none}}
